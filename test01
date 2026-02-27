@@ -1,0 +1,110 @@
+import streamlit as st
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.signal import fftconvolve
+
+st.set_page_config(layout="wide")
+st.title("レーザー直描フォトリソ シミュレーション（拡張レンジ）")
+
+# ======================
+# サイドバー：入力パラメーター
+# ======================
+st.sidebar.header("入力パラメーター")
+
+# マスク（理想パターン）
+X = st.sidebar.slider("マスク幅 X [µm]", 1.0, 50.0, 5.0, 0.5)
+Y = st.sidebar.slider("マスク長 Y [µm]", 1.0, 50.0, 20.0, 0.5)
+
+# 光学パラメーター
+lam_nm = st.sidebar.slider("波長 λ [nm]", 200, 2000, 405, 5)
+lam = lam_nm * 1e-3   # nm → µm（重要）
+
+w0 = st.sidebar.slider("ビームウエスト w0 [µm]", 0.2, 5.0, 1.0, 0.1)
+
+# レジスト
+alpha = st.sidebar.slider("吸収係数 α [1/µm]", 0.0, 2.0, 0.5, 0.05)
+Dth = st.sidebar.slider("二値化閾値 Dth", 0.01, 1.0, 0.2, 0.01)
+
+# 深さ
+Z = st.sidebar.slider("深さ Z [µm]", 0.0, 1000.0, 10.0, 1.0)
+
+# ======================
+# 計算グリッド
+# ======================
+dx = 0.1
+grid_size = max(60, X * 3)
+
+x = np.arange(-grid_size, grid_size, dx)
+y = np.arange(-grid_size, grid_size, dx)
+Xg, Yg = np.meshgrid(x, y)
+
+# ======================
+# 理想マスク
+# ======================
+mask = (
+    (np.abs(Xg) < X / 2) &
+    (np.abs(Yg) < Y / 2)
+).astype(float)
+
+# ======================
+# ガウシアンビーム（回折含む）
+# ======================
+zR = np.pi * w0**2 / lam
+wz = w0 * np.sqrt(1 + (Z / zR)**2)
+
+PSF = np.exp(-2 * (Xg**2 + Yg**2) / wz**2)
+PSF /= PSF.sum()
+
+# ======================
+# 露光強度
+# ======================
+Ixyz = fftconvolve(mask, PSF, mode="same")
+Ixyz *= np.exp(-alpha * Z)
+
+# ======================
+# 二値化
+# ======================
+binary = Ixyz > Dth
+
+# ======================
+# CD(z)
+# ======================
+profile = binary[binary.shape[0] // 2]
+CD = np.sum(profile) * dx
+
+# ======================
+# 表示
+# ======================
+st.subheader(f"深さ Z = {Z:.1f} µm における CD : **{CD:.2f} µm**")
+
+fig, axs = plt.subplots(1, 3, figsize=(15, 4))
+
+axs[0].set_title("Mask (X,Y)")
+im0 = axs[0].imshow(mask, extent=[x[0], x[-1], y[0], y[-1]])
+plt.colorbar(im0, ax=axs[0])
+
+axs[1].set_title("I(x,y,z)")
+im1 = axs[1].imshow(Ixyz, extent=[x[0], x[-1], y[0], y[-1]])
+plt.colorbar(im1, ax=axs[1])
+
+axs[2].set_title("Binary Image")
+im2 = axs[2].imshow(binary, extent=[x[0], x[-1], y[0], y[-1]])
+plt.colorbar(im2, ax=axs[2])
+
+for ax in axs:
+    ax.set_xlabel("x [µm]")
+    ax.set_ylabel("y [µm]")
+
+st.pyplot(fig)
+
+# ======================
+# 参考情報表示
+# ======================
+st.markdown(
+    f"""
+**参考値**  
+- 波長 λ = {lam_nm} nm  
+- Rayleigh長 zR = {zR:.1f} µm  
+- 発散半角 θ ≈ {lam / (np.pi * w0):.4f} rad
+"""
+)
